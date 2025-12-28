@@ -69,5 +69,8 @@ docs/_build/
 # VSCode
 .vscode/
 
+# testing
+tests/
+
 # Pyenv
 .python-version

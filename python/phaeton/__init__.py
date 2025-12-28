@@ -1,38 +1,34 @@
-# python/phaeton/__init__.py
+from .engine import Engine
+from .pipeline import Pipeline
 
-# Coba import binary Rust (ini bakal gagal kalau belum dicompile, 
-# jadi kita kasih try-except biar gak error pas lagi coding python doang)
+__all__ = ["Engine", "Pipeline"]
+_DEFAULT_ENGINE = Engine(workers=0)
+
 try:
     from ._phaeton import __version__ as _rust_version
 except ImportError:
     _rust_version = "0.0.0-dev"
 
-# Import submodule biar user bisa akses phaeton.text, dll
-from . import text, io, guard
-
-# --- ROOT FUNCTIONS & CONFIG ---
-
-_CONFIG = {
-    "threads": 4,
-    "strict": True
-}
-
-def configure(threads: int = 4, strict: bool = True):
-    """Global configuration settings for Phaeton engine."""
-    global _CONFIG
-    _CONFIG["threads"] = threads
-    _CONFIG["strict"] = strict
-    # Nanti di sini kita pass config ke Rust
-    print(f"DEBUG: Config updated -> {_CONFIG}")
-
 def version() -> str:
-    """Check library and engine version."""
+    """Returns the library version string."""
     return f"Phaeton v0.1.0 (Engine: Rust v{_rust_version})"
 
-def sanitize(text: str) -> str:
-    """
-    [DUMMY] Otomatis mendeteksi PII umum dan menggantinya dengan ***.
-    """
-    # Placeholder logic (Python side)
-    if not text: return ""
-    return text.replace("@", "***").replace("08", "**")
+def filter(source: str, filter: str) -> str:
+    """Shortcut function to filter data from source."""
+    results = (
+        _DEFAULT_ENGINE.ingest(source)
+            .filter(filter)
+            .run()
+    )
+    return results
+
+def clean(source: str, operation: dict) -> str:
+    """Shortcut function to clean data from source."""
+    pipeline = _DEFAULT_ENGINE.ingest(source)
+    for op, mode in operation.items():
+        if op == "sanitize":
+            pipeline = pipeline.sanitize(mode)
+        elif op == "filter":
+            pipeline = pipeline.filter(mode)
+    results = pipeline.run()
+    return results
