@@ -1,84 +1,84 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use std::collections::HashMap;
+use pythonize::depythonize; // <--- Import penerjemah
+use serde_json::Value;
 
 mod engine;
 mod processors;
+mod streaming;
+mod error;
 
-use processors::{io, text};
+use engine::Engine;
+use streaming::StreamProcessor;
 
+/// Probe file to detect metadata: encoding, delimiter, headers, etc.
 #[pyfunction]
-fn execute_pipeline(_py: Python, source: String, steps: &PyList, config: &PyDict) -> PyResult<Vec<String>> {
+fn probe_file_header(path: String) -> PyResult<HashMap<String, String>> {
+    let result = processors::probe::detect_file_metadata(&path)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
     
-    // 1. Engine setup
-    let workers = match config.get_item("workers")? {
-        Some(item) => item.extract::<usize>().unwrap_or(0),
-        None => 0,
-    };
+    Ok(result)
+}
 
-    engine::setup(workers);
+/// Preview n rows of the pipeline
+#[pyfunction]
+fn preview_pipeline(_py: Python, source: String, steps_py: PyObject, n: usize) -> PyResult<Vec<HashMap<String, String>>> {
+    let steps: Vec<HashMap<String, Value>> = depythonize(steps_py.as_ref(_py))
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid steps format: {}", e)))?;
 
-    // 2. Read File
-    let mut data = io::read_file(&source).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to read {}: {}", source, e))
-    })?;
+    let processor = StreamProcessor::new(source, steps, n);
+    let preview = processor.peek()
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+    
+    Ok(preview)
+}
 
-    let mut output_path: Option<String> = None;
+/// Execute single pipeline (.run())
+#[pyfunction]
+fn execute_pipeline(_py: Python, payload_py: PyObject) -> PyResult<HashMap<String, u64>> {
+    let payload: HashMap<String, Value> = depythonize(payload_py.as_ref(_py))
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid payload format: {}", e)))?;
 
-    // 3. Loop through steps
-    for step in steps.iter() {
-        let step_dict = step.downcast::<PyDict>()?;
-        
-        let action_item = step_dict.get_item("action")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'action' key"))?;
-        
-        let action: String = action_item.extract()?;
+    let engine = Engine::new(0); 
+    let stats = engine.execute_single(payload)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+    
+    Ok(stats)
+}
 
-        match action.as_str() {
-            "filter" => {
-                let pattern_item = step_dict.get_item("pattern")?
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'pattern' for filter"))?;
-                let pattern: String = pattern_item.extract()?;
-                
-                data = text::filter(data, &pattern);
-            },
-            "sanitize" => {
-                let mode = match step_dict.get_item("mode")? {
-                    Some(item) => item.extract::<String>().unwrap_or_else(|_| "default".to_string()),
-                    None => "default".to_string(),
-                };
-                
-                data = text::sanitize(data, &mode);
-            },
-            "save" => {
-                 let path_item = step_dict.get_item("path")?
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'path' for save"))?;
-                 let path: String = path_item.extract()?;
-                 
-                 io::write_file(&path, &data).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write to {}: {}", path, e))
-                 })?;
-                 
-                 output_path = Some(path);
-            },
-            _ => {
-                println!("Warning: Unknown action '{}'", action);
-            }
-        }
-    }
+/// Execute BATCH pipelines (Parallel)
+#[pyfunction]
+fn execute_batch(
+    _py: Python,
+    payloads_py: PyObject, 
+    config_py: PyObject
+) -> PyResult<Vec<HashMap<String, u64>>> {
+    
+    // Translating Payloads (List of Dicts)
+    let payloads: Vec<HashMap<String, Value>> = depythonize(payloads_py.as_ref(_py))
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid payloads: {}", e)))?;
+    
+    // Translating Config (Dict)
+    let config: HashMap<String, Value> = depythonize(config_py.as_ref(_py))
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid config: {}", e)))?;
 
-    if let Some(path) = output_path {
-        println!("Success: Processed {} lines. Saved to: {}", data.len(), path);
-    } else {
-        // pass
-    }
-
-    // Vec<String>
-    Ok(data) 
+    let workers = config.get("workers")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    
+    let engine = Engine::new(workers);
+    let results = engine.execute_parallel(payloads)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+    
+    Ok(results)
 }
 
 #[pymodule]
 fn _phaeton(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(execute_pipeline, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(wrap_pyfunction!(probe_file_header, m)?)?;
+    m.add_function(wrap_pyfunction!(preview_pipeline, m)?)?;
+    m.add_function(wrap_pyfunction!(execute_pipeline, m)?)?;
+    m.add_function(wrap_pyfunction!(execute_batch, m)?)?;
     Ok(())
 }
