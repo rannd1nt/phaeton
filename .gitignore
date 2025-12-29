@@ -43,8 +43,9 @@ htmlcov/
 nosetests.xml
 coverage.xml
 
-# csv files
+# data files
 *.csv
+*.parquet
 
 # Translations
 *.mo
