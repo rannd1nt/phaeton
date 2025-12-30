@@ -5,114 +5,89 @@
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> ⚠️ **Project Status:** Phaeton is currently in **Experimental Beta (v0.2.0)**.
+> ⚠️ **Project Status:** Phaeton is currently in **Experimental Beta (v0.2.1)**.
 > The core streaming engine is functional, but the library is currently under limited maintenance due to the author's personal schedule.
 
 
 **Phaeton** is a specialized, Rust-powered preprocessing engine designed to sanitize raw data streams before they reach your analytical environment.
 
-It acts as the strictly typed **"Gatekeeper"** of your data pipeline. Unlike traditional DataFrame libraries that load entire datasets into RAM, Phaeton employs a **zero-copy streaming architecture**. It processes data chunk-by-chunk—filtering noise, fixing encodings, and standardizing formats ensuring **O(1) memory complexity**.
+It acts as the strictly typed **"Gatekeeper"** of your data pipeline. Unlike traditional DataFrame libraries that attempt to load entire datasets into RAM, Phaeton employs a **zero-copy streaming architecture**. It processes data chunk-by-chunk filtering noise, fixing encodings, and standardizing formats ensuring **O(1) memory complexity** relative to file size.
 
-This allows you to process massive datasets (GBs/TBs) on standard hardware without memory spikes, delivering clean, high-quality data to downstream tools like Pandas, Polars, or ML models.
+This allows you to process massive datasets on standard hardware without memory spikes, delivering clean, high-quality data to downstream tools like Pandas, Polars, or ML models.
 
 > **The Philosophy:** Don't waste memory loading garbage. Clean the stream first, then analyze the gold.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
-* **Streaming Architecture:** Processes files chunk-by-chunk. Memory usage remains flat and low regardless of file size.
-* **Parallel Execution:** Utilizes all CPU cores via Rayon (Rust) for heavy lifting (Regex, Fuzzy Matching).
-* **Strict Quarantine:** Bad data isn't just dropped; it's quarantined into a separate file with a generated `_phaeton_reason` column for auditing.
-* **Smart Casting:** Automatically handles messy currency formats (e.g., `"$ 5.000,00"` → `5000.0` float) without manual string parsing.
-* **Zero-Copy Logic:** Built on Rust's `Cow<str>` to minimize memory allocation during processing.
+* **Streaming Architecture:** Processes files chunk-by-chunk. Memory usage remains stable regardless of whether the file is 100MB or 100GB.
+* **Parallel Execution:** Utilizes all CPU cores via **Rust Rayon** to handle heavy lifting (Regex, Fuzzy Matching) without blocking Python.
+* **Strict Quarantine:** Bad data isn't just dropped silently; it's quarantined into a separate file with a generated `_phaeton_reason` column for auditing.
+* **Smart Casting:** Automatically handles messy formats (e.g., `"Rp 5.250.000,00"` → `5250000` int) without complex manual parsing.
+* **Configurable Engine:** Full control over `batch_size` and worker threads to tune performance for low-memory devices or high-end servers.
 
 ---
 
-## 📦 Installation
+##  Performance Benchmark
 
-```bash
-pip install phaeton
-```
+Phaeton is optimized for "Dirty Data" scenarios involving heavy string parsing, regex filtering, and fuzzy matching.
 
-## ⚡ Key Features
 
-**1. The Scenario**
+**Test Scenario:**
+We generated a **Chaos Dataset** containing **1 Million Rows** of mixed dirty data:
+* **Operations:** Trim whitespace, Currency scrubbing (`$ 50.000,00` -> `50000`), Type casting, Fuzzy Alignment (Typo correction for City names), and Regex Filtering.
+* **Hardware:** Entry-level Laptop (Intel Core i3-1220P, 16GB RAM).
 
-You have a dirty CSV `(raw_data.csv)` with mixed encodings, typos in city names, and messy currency strings. You want a clean Parquet file for Pandas.
+**Results:**
 
-**2. The Code**
+| OS Environment | Speed (Rows/sec) | Duration (1M Rows) | Throughput |
+| :--- | :--- | :--- | :--- |
+| **Windows 11** | **~820,000 rows/s** | **1.21s** | **~70 MB/s** |
+| **Linux (Arch)** | ~575,000 rows/s | 1.73s | ~49 MB/s |
+
+> *Note: Phaeton maintains a low and predictable memory footprint (~10-20MB overhead) regardless of the input file size due to its streaming nature.*
+
+---
+##  Usage Example
 
 ```python
 import phaeton
 
-# 1. Probe the file (Auto-detect encoding, delimiter, headers, etc)
-info = phaeton.probe("raw_data.csv")
-print(f"Detected: {info['encoding']} with delimiter '{info['delimiter']}'")
+# 1. Initialize Engine (Auto-detect cores)
+engine = phaeton.Engine()
 
-# 2. Initialize Engine (0 = Use all CPU cores)
-eng = phaeton.Engine(workers=0)
-
-# 3. Build the Pipeline
+# 2. Define Pipeline
 pipeline = (
-    eng.ingest("raw_data.csv")
-       
-       # GATEKEEPING: Fix encoding & standardize headers
-       .decode(encoding=info['encoding'])
-       .headers(style="snake")
-       
-       # ELIMINATION: Remove useless rows
-       .prune(col="email") # Drop rows with empty email
-       .discard(col="status", match="BANNED", mode="exact")
-       
-       # TRANSFORMATION: Smart Cleaning
-       # "$ 30.000,00" -> 30000 (Integer)
-       # If it fails (e.g., "Free"), send row to Quarantine
-       .cast("salary", type="int", clean=True, on_error="quarantine")
-       
-       # FUZZY FIXING: Fix typos ("Cihcago" -> "Chicago")
-       .fuzzyalign(
-           col="city", 
-           ref=["Chicago", "Jakarta", "Shanghai"], 
-           threshold=0.85
-        )
-       
-       # OUTPUT: Split into Clean Data & Audit Log
-       .quarantine("bad_data_audit.csv")
-       .dump("clean_data.parquet")
+    engine.ingest("dirty_data.csv")
+    .prune(col="email")                                     # Drop rows if email is empty
+    .discard("status", "BANNED", mode="exact")              # Filter specific values
+    .scrub("username", "trim")                              # Clean whitespace
+    .scrub("salary", "currency")                            # Parse "Rp 5.000" to number
+    .cast("salary", "int", clean=True)                      # Safely cast to Integer
+    .fuzzyalign("city", ref=["Jakarta", "Bandung"], threshold=0.85) # Fix typos
+    .quarantine("quarantine.csv")                           # Save bad data here
+    .dump("clean_data.csv")                                 # Save good data here
 )
 
-# 4. Execute (Rust takes over)
-stats = eng.exec([pipeline])
-
-print(f"Processed: {stats.processed} rows")
-print(f"Saved: {stats.saved} | Quarantined: {stats.quarantined}")
+# 3. Execute
+stats = engine.exec(pipeline)
+print(f"Processed: {stats.processed}, Saved: {stats.saved}")
 ```
 
-<br>
+---
 
-## 📊 Performance Benchmark
+## Installation
 
-Phaeton is optimized for "Dirty Data" scenarios (String parsing, Regex filtering, Fuzzy matching).
+Phaeton provides **Universal Wheels (ABI3)**. No Rust compiler needed.
+```bash
+pip install phaeton
+```
+> **Supported:** Python 3.8+ on Windows, Linux, and macOS (Intel & Apple Silicon).
 
-**Test Environment:**
-- **Dataset:** 1 Million Rows (Mixed dirty data: Typos, Currency strings, Encoding issues).
-- **Hardware:** Entry Level Laptop.
+---
 
-**Result:**
-| Metric | Phaeton |
-| :---: | :---: |
-| Speed | ~575,000 rows/sec |
-| Memory Usage | ~50MB (Constant) |
-| Strategy | Parallel Streaming |
-
-<br>
-
-> Note: Phaeton maintains low memory footprint even when processing multi-gigabyte files due to its zero-copy streaming architecture.
-
-<br>
-
-## 📚 API Reference
+## API Reference
 
 ### Root Module <br>
 | Method | Description 
@@ -155,24 +130,27 @@ Methods to save the final results or handle rejected data.
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
-Phaeton is currently in **Beta (v0.2.0)**. Here is the status of our development pipeline:
+Phaeton is currently in **Beta (v0.2.1)**. Here is the status of our development pipeline:
 
-| Feature | Status | Notes |
+| Feature | Status | Implementation Notes |
 | :--- | :---: | :--- |
-| **Parallel Streaming Engine** | ✅ Ready | Powered by Rayon |
-| **Smart Type Casting** | ✅ Ready | Auto-clean numeric strings |
-| **Quarantine Logic** | ✅ Ready | Audit logs for bad data |
-| **Fuzzy Alignment** | ✅ Ready | Jaro-Winkler / Levenshtein |
-| **SHA-256 Hashing** | 📝 Planned | Security for PII data |
-| **Column Splitting & Combining** | 📝 Planned | - |
-| **Imputation (`.fill()`)** | 📝 Planned | Mean/Median/Mode fill |
-| **Parquet/Arrow Integration** | 📝 Planned | Native output support |
+| **Parallel Streaming Engine** | ✅ Ready | Powered by Rust Rayon (Multi-core) |
+| **Regex & Filter Logic** | ✅ Ready | `keep`, `discard`, `prune` implemented |
+| **Smart Type Casting** | ✅ Ready | Auto-clean numeric strings (`"Rp 5,000"` -> `5000`) |
+| **Fuzzy Alignment** | ✅ Ready | Jaro-Winkler for typo correction |
+| **Quarantine System** | ✅ Ready | Full audit trail for rejected rows |
+| **Basic Text Scrubbing** | ✅ Ready | Trim, HTML strip, Case conversion |
+| **Header Normalization** | 🚧 In Progress | `snake_case`, `camelCase` conversions |
+| **Date Normalization** | 🚧 In Progress | Auto-detect & reformat dates |
+| **Deduplication** | 📝 Planned | Row-level & Column-level dedupe |
+| **Hashing & Anonymization** | 📝 Planned | SHA-256 for PII data |
+| **Parquet/Arrow Support** | 📝 Planned | Native output integration |
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 This project is built with **Maturin** (PyO3 + Rust). Interested in contributing?
 

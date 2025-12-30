@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use std::collections::HashMap;
-use pythonize::depythonize; // <--- Import penerjemah
+use pythonize::depythonize;
 use serde_json::Value;
 
 mod engine;
@@ -26,7 +26,7 @@ fn preview_pipeline(_py: Python, source: String, steps_py: PyObject, n: usize) -
     let steps: Vec<HashMap<String, Value>> = depythonize(steps_py.as_ref(_py))
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid steps format: {}", e)))?;
 
-    let processor = StreamProcessor::new(source, steps, n);
+    let processor = StreamProcessor::new(source, steps, n, 10000);
     let preview = processor.peek()
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
     
@@ -39,7 +39,7 @@ fn execute_pipeline(_py: Python, payload_py: PyObject) -> PyResult<HashMap<Strin
     let payload: HashMap<String, Value> = depythonize(payload_py.as_ref(_py))
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid payload format: {}", e)))?;
 
-    let engine = Engine::new(0); 
+    let engine = Engine::new(0, 10000); 
     let stats = engine.execute_single(payload)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
     
@@ -62,11 +62,17 @@ fn execute_batch(
     let config: HashMap<String, Value> = depythonize(config_py.as_ref(_py))
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid config: {}", e)))?;
 
+    // Get number of workers
     let workers = config.get("workers")
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
+
+    // Get batch size
+    let batch_size = config.get("batch_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10_000) as usize;
     
-    let engine = Engine::new(workers);
+    let engine = Engine::new(workers, batch_size);
     let results = engine.execute_parallel(payloads)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
     

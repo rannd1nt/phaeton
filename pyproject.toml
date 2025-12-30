@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "phaeton"
-version = "0.2.1"
-description = "High-performance preprocessing and streaming data cleaning, powered by Rust."
+version = "0.2.2"
+description = "A high-performance Python library for preprocessing and sanitizing raw data streams, accelerated by Rust."
 readme = "README.md"
-license = {text = "MIT"}
+license = {file = "MIT"}
 authors = [
     {name = "Zahraan Dzakii Tsaqiif", email = "zahraandzakiits@gmail.com"}
 ]
@@ -25,6 +25,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 
@@ -32,6 +34,7 @@ classifiers = [
 Homepage = "https://github.com/rannd1nt/phaeton"
 Repository = "https://github.com/rannd1nt/phaeton"
 Issues = "https://github.com/rannd1nt/phaeton/issues"
+Documentation = "https://github.com/rannd1nt/phaeton#readme"
 
 [project.optional-dependencies]
 dev = [

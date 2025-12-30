@@ -5,24 +5,21 @@ use std::collections::HashMap;
 use csv::{ReaderBuilder, WriterBuilder, StringRecord};
 use rayon::prelude::*;
 use serde_json::Value;
-use regex::Regex; // Kita butuh struct Regex
+use regex::Regex;
 
 use crate::error::{PhaetonError, Result};
 use crate::processors::{text, cast, filter}; 
 
-const BATCH_SIZE: usize = 10_000;
 
 enum RowResult {
     Keep(StringRecord),
     Discarded(StringRecord, String),
 }
 
-// --- Enum Step yang "Lebih Cerdas" ---
-// Kita simpan object berat (Regex, Vector Reference) di sini
+// save pre-compiled steps
 enum PreparedStep {
     Scrub { col_idx: usize, mode: String },
     
-    // Regex disimpan sudah matang (Compiled), bukan String lagi
     KeepRegex { col_idx: usize, re: Regex }, 
     KeepString { col_idx: usize, pattern: String, mode: String }, // Exact/Contains
     
@@ -32,7 +29,6 @@ enum PreparedStep {
     Prune { col_idx: Option<usize> },
     Cast { col_idx: usize, dtype: String, clean: bool },
     
-    // Fitur Align Baru!
     Align { col_idx: usize, ref_list: Vec<String>, threshold: f64 },
 }
 
@@ -40,6 +36,7 @@ pub struct StreamProcessor {
     source: String,
     steps: Vec<HashMap<String, Value>>,
     limit: Option<usize>,
+    batch_size: usize,
 }
 
 pub struct ExecutionStats {
@@ -50,13 +47,18 @@ pub struct ExecutionStats {
 }
 
 impl StreamProcessor {
-    pub fn new(source: String, steps: Vec<HashMap<String, Value>>, limit: usize) -> Self {
-        Self { source, steps, limit: if limit == 0 { None } else { Some(limit) } }
+    pub fn new(source: String, steps: Vec<HashMap<String, Value>>, limit: usize, batch_size: usize) -> Self {
+        let effective_batch = if batch_size == 0 { 10_000 } else { batch_size };
+        
+        Self { 
+            source, 
+            steps, 
+            limit: if limit == 0 { None } else { Some(limit) },
+            batch_size: effective_batch 
+        }
     }
 
-    // ... method peek() biarkan sama seperti sebelumnya ...
     pub fn peek(&self) -> Result<Vec<HashMap<String, String>>> {
-         // (Gunakan kode peek yang lama, tidak berubah)
          let file = File::open(&self.source).map_err(|_| PhaetonError::FileNotFound(self.source.clone()))?;
          let reader = BufReader::new(file);
          let mut csv_reader = ReaderBuilder::new().has_headers(true).flexible(true).from_reader(reader);
@@ -166,12 +168,12 @@ impl StreamProcessor {
         let mut total_processed = 0;
         let mut total_saved = 0;
         let mut total_quarantined = 0;
-        let mut batch = Vec::with_capacity(BATCH_SIZE);
+        let mut batch = Vec::with_capacity(self.batch_size);
         let mut iter = reader.into_records();
 
         loop {
             batch.clear();
-            for _ in 0..BATCH_SIZE {
+            for _ in 0..self.batch_size {
                 match iter.next() {
                     Some(Ok(record)) => batch.push(record),
                     Some(Err(_)) => continue,

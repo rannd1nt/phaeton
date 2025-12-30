@@ -30,15 +30,19 @@ class Engine:
     of one or multiple pipelines simultaneously.
     """
     
-    def __init__(self, workers: int = 0):
+    def __init__(self, workers: int = 0, batch_size: int = 10000):
         """
         Initialize the Engine.
 
         Args:
             workers (int, optional): Number of CPU threads to use. 
                 Set to 0 to automatically use all available cores. Defaults to 0.
+            batch_size (int, optional): Number of rows to process in each batch. 
+                Defaults to 10000.
+
+
         """
-        self.config = {"workers": workers}
+        self.config = {"workers": workers, "batch_size": batch_size}
 
     def ingest(self, source: str) -> Pipeline:
         """

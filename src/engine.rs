@@ -6,10 +6,11 @@ use std::time::Instant;
 
 pub struct Engine {
     workers: usize,
+    batch_size: usize,
 }
 
 impl Engine {
-    pub fn new(workers: usize) -> Self {
+    pub fn new(workers: usize, batch_size: usize) -> Self {
         let actual_workers = if workers == 0 {
             // Auto-detect CPU cores
             std::thread::available_parallelism()
@@ -25,9 +26,12 @@ impl Engine {
             .build_global()
             .ok(); // Ignore if already built
         
-        Self { workers: actual_workers }
+        Self { 
+            workers: actual_workers,
+            batch_size: if batch_size == 0 { 10_000 } else { batch_size } 
+        }
     }
-    
+
     /// Execute single pipeline (non-parallel)
     pub fn execute_single(&self, payload: HashMap<String, serde_json::Value>) -> Result<HashMap<String, u64>> {
         let start = Instant::now();
@@ -48,7 +52,7 @@ impl Engine {
         let quarantine = payload.get("quarantine")
             .and_then(|v| v.as_str());
         
-        let processor = StreamProcessor::new(source, steps, 0);
+        let processor = StreamProcessor::new(source, steps, 0, self.batch_size);
         let stats = processor.execute(output, quarantine)?;
         
         let mut result = HashMap::new();

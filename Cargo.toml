@@ -1,8 +1,8 @@
 [package]
 name = "phaeton"
-version = "0.1.2"
+version = "0.2.2"
 edition = "2021"
-authors = ["Your Name <zahraandzakiits@gmail.com>"]
+authors = ["Zahraan Dzakii Tsaqiif <zahraandzakiits@gmail.com>"]
 description = "A high-performance Python library for preprocessing and sanitizing raw data streams, accelerated by Rust."
 license = "MIT"
 

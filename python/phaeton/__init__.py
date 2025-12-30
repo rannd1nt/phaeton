@@ -7,16 +7,16 @@ _DEFAULT_ENGINE = Engine(workers=0)
 try:
     from ._phaeton import __version__ as _rust_version
 except ImportError:
-    _rust_version = "0.2.0-alpha"
+    _rust_version = "0.2.2-beta"
 
 def version() -> str:
     """
     Returns the current version of the Phaeton library and the underlying Rust engine.
 
     Returns:
-        str: Version string (e.g., "Phaeton v0.2.0 (Engine: Rust v0.1.1)").
+        str: Version string (e.g., "Phaeton v1.1.0 (Phaeton Rust Core: v1.1.0)").
     """
-    return f"Phaeton v0.2.0 (Engine: Rust v{_rust_version})"
+    return f"Phaeton v0.2.2-beta (Phaeton Rust Core: v{_rust_version})"
 
 def probe(source: str) -> dict:
     """
