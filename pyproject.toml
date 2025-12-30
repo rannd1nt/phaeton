@@ -4,8 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "phaeton"
-version = "0.2.0"
-description = "High-performance, streaming data cleaning engine backed by Rust."
+version = "0.2.1"
+description = "High-performance preprocessing and streaming data cleaning, powered by Rust."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [

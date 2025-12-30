@@ -1,9 +1,9 @@
 [package]
 name = "phaeton"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Your Name <zahraandzakiits@gmail.com>"]
-description = "High-performance data cleaning and preprocessing library"
+description = "A high-performance Python library for preprocessing and sanitizing raw data streams, accelerated by Rust."
 license = "MIT"
 
 [lib]
@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Python Bridge
-pyo3 = { version = "0.20", features = ["extension-module"] }
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
 pythonize = "0.20"
 
 # Parallelism (Core Performance)
