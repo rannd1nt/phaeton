@@ -5,7 +5,7 @@
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> ⚠️ **Project Status:** Phaeton is currently in **Experimental Beta (v0.2.1)**.
+> ⚠️ **Project Status:** Phaeton is currently in **Experimental Beta (v0.2.2)**.
 > The core streaming engine is functional, but the library is currently under limited maintenance due to the author's personal schedule.
 
 
@@ -94,6 +94,16 @@ pip install phaeton
 | :---: | :---: | 
 | `phaeton.probe(path)` | Detects encoding (e.g., Windows-1252) and delimiter automatically. |
 
+### Engine Methods <br>
+
+Methods to save the final results or handle rejected data.
+
+| Method | Description |
+| :--- | :--- |
+| `.ingest(source)` | Creates a new data processing pipeline for a specific source file. |
+| `.exec(pipelines)` | Executes multiple pipelines in parallel. |
+| `.validate(pipelines)` | Performs a dry-run to validate schema compatibility. | 
+
 ### Pipeline Methods <br>
 These methods are chainable.
 
@@ -132,7 +142,7 @@ Methods to save the final results or handle rejected data.
 
 ## Roadmap
 
-Phaeton is currently in **Beta (v0.2.1)**. Here is the status of our development pipeline:
+Phaeton is currently in **Beta (v0.2.2)**. Here is the status of our development pipeline:
 
 | Feature | Status | Implementation Notes |
 | :--- | :---: | :--- |
