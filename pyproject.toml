@@ -7,7 +7,7 @@ name = "phaeton"
 version = "0.2.2"
 description = "A high-performance Python library for preprocessing and sanitizing raw data streams, accelerated by Rust."
 readme = "README.md"
-license = {file = "MIT"}
+license = {file = "LICENSE"}
 authors = [
     {name = "Zahraan Dzakii Tsaqiif", email = "zahraandzakiits@gmail.com"}
 ]
