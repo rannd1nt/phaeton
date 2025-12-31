@@ -1,4 +1,6 @@
-from typing import List, Dict, Optional, Literal, Union
+from typing import List, Dict, Optional, Literal, Union, Any
+from ._internal import ACCESS_TOKEN
+import copy
 
 # --- Type Definitions ---
 HeaderCase = Literal["snake", "camel", "pascal", "kebab", "constant"]
@@ -16,7 +18,14 @@ class Pipeline:
     All methods in this class are lazy; they record instructions ("steps") 
     that are executed only when `.run()` or `Engine.exec()` is called.
     """
-    def __init__(self, source: str, config: dict):
+    def __init__(self, source: str, config: dict, token: Any = None):
+
+        if token is not ACCESS_TOKEN:
+            raise PermissionError(
+                "Illegal Access: Pipeline cannot be instantiated directly. "
+                "You must use 'eng.ingest()' to create a pipeline."
+            )
+        
         self.source = source
         self.config = config
         self.steps: List[Dict] = []
@@ -299,6 +308,22 @@ class Pipeline:
         self.steps.append({"action": "dump", "path": path, "format": format})
         return self
 
+    def fork(self) -> "Pipeline":
+        """
+        Creates a new independent branch (fork) of the pipeline logic.
+        Inherits all previous steps but RESETS output targets.
+        """
+
+
+        new_obj = copy.copy(self)
+        
+        new_obj.steps = copy.deepcopy(self.steps)
+        
+        new_obj.output_target = None 
+        new_obj.quarantine_path = None 
+        
+        return new_obj
+    
     def run(self):
         """
         Triggers a single pipeline execution immediately.

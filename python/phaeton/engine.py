@@ -1,9 +1,12 @@
+import threading
 from typing import List, Union, Dict
 from .pipeline import Pipeline
+from ._internal import ACCESS_TOKEN
 
 class EngineResult:
     """
     Encapsulates the statistical results of a pipeline execution.
+    This class is immutable (Read-Only).
 
     Attributes:
         processed (int): Total number of rows read from the source.
@@ -11,12 +14,31 @@ class EngineResult:
         quarantined (int): Total number of rows rejected and sent to quarantine.
         duration (int): Execution time in milliseconds.
     """
-    def __init__(self, stats: Dict[str, int]):
-        self.processed = stats.get("processed_rows", 0)
-        self.saved = stats.get("saved_rows", 0)
-        self.quarantined = stats.get("quarantined_rows", 0)
-        self.duration = stats.get("duration_ms", 0)
 
+    __slots__ = ('_processed', '_saved', '_quarantined', '_duration')
+
+    def __init__(self, stats: Dict[str, int]):
+        self._processed = stats.get("processed_rows", 0)
+        self._saved = stats.get("saved_rows", 0)
+        self._quarantined = stats.get("quarantined_rows", 0)
+        self._duration = stats.get("duration_ms", 0)
+
+    @property
+    def processed(self) -> int:
+        return self._processed
+
+    @property
+    def saved(self) -> int:
+        return self._saved
+
+    @property
+    def quarantined(self) -> int:
+        return self._quarantined
+
+    @property
+    def duration(self) -> int:
+        return self._duration
+    
     def __repr__(self):
         return (f"<EngineResult | Processed: {self.processed}, "
                 f"Saved: {self.saved}, Quarantined: {self.quarantined} "
@@ -30,6 +52,17 @@ class Engine:
     of one or multiple pipelines simultaneously.
     """
     
+    _instance = None
+    _lock = threading.Lock()
+    _initialized = False
+    
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(Engine, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(self, workers: int = 0, batch_size: int = 10000):
         """
         Initialize the Engine.
@@ -39,10 +72,15 @@ class Engine:
                 Set to 0 to automatically use all available cores. Defaults to 0.
             batch_size (int, optional): Number of rows to process in each batch. 
                 Defaults to 10000.
-
-
         """
-        self.config = {"workers": workers, "batch_size": batch_size}
+
+        if self._initialized:
+            return
+        
+        with self._lock:
+            if not self._initialized:
+                self.config = {"workers": workers, "batch_size": batch_size}
+                self._initialized = True
 
     def ingest(self, source: str) -> Pipeline:
         """
@@ -54,7 +92,7 @@ class Engine:
         Returns:
             Pipeline: A new pipeline builder instance.
         """
-        return Pipeline(source, self.config)
+        return Pipeline(source, self.config, token=ACCESS_TOKEN)
 
     def validate(self, pipelines: Union[Pipeline, List[Pipeline]]) -> bool:
         """
