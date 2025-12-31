@@ -5,11 +5,11 @@
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> ⚠️ **Project Status:** Phaeton is currently in **Experimental Beta (v0.2.2)**.
-> The core streaming engine is functional, but the library is currently under limited maintenance due to the author's personal schedule.
+> ⚠️ **Project Status:** Phaeton is currently in **Experimental Beta (v0.2.3)**.
+> The core streaming engine is functional, but the library is currently under limited maintenance due to the author's personal schedule. So, some methods are still not working or are only dummy or mockup methods.
 
 
-**Phaeton** is a specialized, Rust-powered preprocessing engine designed to sanitize raw data streams before they reach your analytical environment.
+**Phaeton** is a specialized, Rust-powered preprocessing and ETL engine designed to sanitize raw data streams before they reach your analytical environment.
 
 It acts as the strictly typed **"Gatekeeper"** of your data pipeline. Unlike traditional DataFrame libraries that attempt to load entire datasets into RAM, Phaeton employs a **zero-copy streaming architecture**. It processes data chunk-by-chunk filtering noise, fixing encodings, and standardizing formats ensuring **O(1) memory complexity** relative to file size.
 
@@ -50,29 +50,52 @@ We generated a **Chaos Dataset** containing **1 Million Rows** of mixed dirty da
 
 ---
 ##  Usage Example
+Based on the features available in the current version.
 
 ```python
 import phaeton
 
 # 1. Initialize Engine (Auto-detect cores)
-engine = phaeton.Engine()
+eng = phaeton.Engine(workers=0, batch_size=25_000)
 
 # 2. Define Pipeline
-pipeline = (
-    engine.ingest("dirty_data.csv")
-    .prune(col="email")                                     # Drop rows if email is empty
-    .discard("status", "BANNED", mode="exact")              # Filter specific values
-    .scrub("username", "trim")                              # Clean whitespace
-    .scrub("salary", "currency")                            # Parse "Rp 5.000" to number
-    .cast("salary", "int", clean=True)                      # Safely cast to Integer
-    .fuzzyalign("city", ref=["Jakarta", "Bandung"], threshold=0.85) # Fix typos
-    .quarantine("quarantine.csv")                           # Save bad data here
-    .dump("clean_data.csv")                                 # Save good data here
+
+# Base Pipeline
+base = (
+    eng.ingest("dirty_data.csv")
+        .prune(col="email")                         # Drop rows if email is empty
+        .prune(col="salary")                        # Drop rows if salary is empty
+        .scrub("username", "trim")                  # Clean whitespace
+        .scrub("salary", "currency")                # Parse "Rp 5.000" to number
+        .cast("salary", "int", clean=True)          # Safely cast to Integer
+        .fuzzyalign("city",
+            ref=["Jakarta", "Bandung"],
+            threshold=0.85
+        ) # Fix typos
 )
 
-# 3. Execute
-stats = engine.exec(pipeline)
-print(f"Processed: {stats.processed}, Saved: {stats.saved}")
+# 3 Pipeline branching using .fork() (Optional)
+
+# Pipeline 1: Keep all rows except status 'BANNED'
+p1 = (
+    base.fork()
+        .discard("status", "BANNED", mode="exact")  # Filter specific values (BANNED)
+        .quarantine("quarantine_1.csv")             # Save bad data here
+        .dump("clean_data_1.csv")                   # Save good data here
+)
+
+# Pipeline 2: Only rows with 'ACTIVE' status keeped
+p2 = (
+    base.fork()
+        .keep("status", "ACTIVE", mode="exact")     # Keep specific values (ACTIVE)
+        .quarantine("quarantine_output_2.csv")      # Save bad data here
+        .dump("cleaned_output_2.csv", format="csv") # Save good data here
+)
+
+# 4. Execute Two Pipeline in Parallel
+stats = engine.exec([p1, p2])
+print(f"Pipeline 1 = Processed: {stats[0].processed}, Saved: {stats[0].saved}")
+print(f"Pipeline 2 = Processed: {stats[1].processed}, Saved: {stats[1].saved}")
 ```
 
 ---
@@ -138,11 +161,19 @@ Methods to save the final results or handle rejected data.
 | `.quarantine(path)` | Saves rejected rows (with reasons) to a separate CSV file. |
 | `.dump(path, format)` | Saves clean data to `.csv`, `.parquet`, or `.json` formats. |
 
+#### Utility & Workflow
+Methods to save the final results or handle rejected data.
+
+| Method | Description |
+| :--- | :--- |
+| `.fork()` | Creates a deep copy of the current pipeline branch. Useful for splitting logic (e.g., saving to multiple formats or creating different clean levels) without rewriting steps. |
+| `.peek(n)` | Previews the first n rows. |
+
 ---
 
 ## Roadmap
 
-Phaeton is currently in **Beta (v0.2.2)**. Here is the status of our development pipeline:
+Phaeton is currently in **Beta (v0.2.3)**. Here is the status of our development:
 
 | Feature | Status | Implementation Notes |
 | :--- | :---: | :--- |
@@ -152,8 +183,9 @@ Phaeton is currently in **Beta (v0.2.2)**. Here is the status of our development
 | **Fuzzy Alignment** | ✅ Ready | Jaro-Winkler for typo correction |
 | **Quarantine System** | ✅ Ready | Full audit trail for rejected rows |
 | **Basic Text Scrubbing** | ✅ Ready | Trim, HTML strip, Case conversion |
-| **Header Normalization** | 🚧 In Progress | `snake_case`, `camelCase` conversions |
-| **Date Normalization** | 🚧 In Progress | Auto-detect & reformat dates |
+| **Inspector Engine** | 📝 Planned | Dedicated stream for data profiling (Read-Only) |
+| **Header Normalization** | 📝 Planned  | `snake_case`, `camelCase` conversions |
+| **Date Normalization** | 📝 Planned | Auto-detect & reformat dates |
 | **Deduplication** | 📝 Planned | Row-level & Column-level dedupe |
 | **Hashing & Anonymization** | 📝 Planned | SHA-256 for PII data |
 | **Parquet/Arrow Support** | 📝 Planned | Native output integration |

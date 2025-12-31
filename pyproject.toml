@@ -4,8 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "phaeton"
-version = "0.2.2"
-description = "A high-performance Python library for preprocessing and sanitizing raw data streams, accelerated by Rust."
+version = "0.2.3"
+description = "A high-performance preprocessing and ETL engine for sanitizing raw data streams, accelerated by Rust."
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
