@@ -1,22 +1,66 @@
+"""
+Phaeton
+=======
+
+A specialized, Rust-powered preprocessing and ETL engine designed to sanitize 
+raw data streams before they reach your analytical environment.
+
+Phaeton acts as the **"Gatekeeper"** of your data pipeline. Phaeton employs a 
+**zero-copy streaming architecture** to ensure maximum performance and low memory usage.
+
+-------------------------------------------------------------------------------
+
+**Project Status: Stable Beta (v0.3.0)**
+
+* **Format Support:** Currently optimized for **CSV files**.
+* **Core Features:**
+* **Streaming Architecture:** Processes files chunk-by-chunk with constant memory.
+    * **Row Filtering:** Powerful `keep`, `discard`, and `prune` logic (Regex support).
+    * **Advanced Scrubbing:** Smart cleaning for Currency, HTML, and Numeric data.
+    * **Privacy & Security:** Secure `hash` (SHA-256) and Email Masking.
+    * **Deduplication:** High-performance sharded deduplication (Full Row or Composite Key).
+    * **Data Imputation:** Static or Streaming Forward Fill (`ffill`).
+    * **Developer Experience:** Interactive `peek()` table preview and Strict Schema Validation.
+
+-------------------------------------------------------------------------------
+
+:copyright: (c) 2026 by rannd1nt.
+:license: MIT, see LICENSE for more details.
+"""
+
 from .engine import Engine, EngineResult
 from .pipeline import Pipeline
+from .exceptions import (
+    Error, 
+    ValueError, 
+    SchemaError, 
+    ConfigurationError, 
+    StateError, 
+    EngineError
+)
 
-__all__ = ["Engine", "EngineResult", "Pipeline"]
-_DEFAULT_ENGINE = Engine(workers=0)
+__all__ = [
+    "Engine", "EngineResult", "Pipeline",
+    "Error", "ValueError", "SchemaError", "ConfigurationError", "StateError", "EngineError"
+]
+
+_HARDCODED_VERSION = "0.3.0"
 
 try:
     from ._phaeton import __version__ as _rust_version
 except ImportError:
-    _rust_version = "0.2.2-beta"
+    _rust_version = _HARDCODED_VERSION
+
+
 
 def version() -> str:
     """
     Returns the current version of the Phaeton library and the underlying Rust engine.
 
     Returns:
-        str: Version string (e.g., "Phaeton v1.1.0 (Phaeton Rust Core: v1.1.0)").
+        str: Version string (e.g., "Phaeton v1.0.0 (Phaeton Rust Core: v1.0.0)").
     """
-    return f"Phaeton v0.2.2-beta (Phaeton Rust Core: v{_rust_version})"
+    return f"Phaeton v{_HARDCODED_VERSION} (Phaeton Rust Core: v{_rust_version})"
 
 def probe(source: str) -> dict:
     """
@@ -44,5 +88,4 @@ def probe(source: str) -> dict:
         from . import _phaeton
         return _phaeton.probe_file_header(source)
     except ImportError:
-        print("[FATAL] Phaeton Core not found.")
-        return {}
+        raise EngineError("Phaeton Rust Core not found. Cannot probe file.")

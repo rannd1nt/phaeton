@@ -1,7 +1,19 @@
 import threading
 from typing import List, Union, Dict
-from .pipeline import Pipeline
 from ._internal import ACCESS_TOKEN
+from .exceptions import (
+    ConfigurationError,
+    EngineError,
+    SchemaError,
+    ValueError as PhaetonValueError
+)
+from .pipeline import (
+    Pipeline, 
+    ScrubMode, 
+    MatchMode, 
+    FillMethod, 
+    CastType
+)
 
 class EngineResult:
     """
@@ -48,13 +60,14 @@ class Engine:
     """
     The orchestrator for Phaeton's parallel processing.
     
-    The Engine manages the thread pool (via Rust Rayon) and handles the execution 
-    of one or multiple pipelines simultaneously.
+    The Engine manages the thread pool and handles the execution 
+    of one or multiple pipelines simultaneously. It implements the Singleton pattern.
     """
     
     _instance = None
     _lock = threading.Lock()
     _initialized = False
+    _ingest_counter = 0
     
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -63,15 +76,20 @@ class Engine:
                     cls._instance = super(Engine, cls).__new__(cls)
         return cls._instance
     
-    def __init__(self, workers: int = 0, batch_size: int = 10000):
+    def __init__(self, workers: int = 0, batch_size: int = 10000, strict: bool = False):
         """
-        Initialize the Engine.
+        Initialize the Engine configuration:
 
         Args:
             workers (int, optional): Number of CPU threads to use. 
                 Set to 0 to automatically use all available cores. Defaults to 0.
             batch_size (int, optional): Number of rows to process in each batch. 
                 Defaults to 10000.
+            strict (bool): If True, performs schema validation (checks column existence) 
+                            before execution. Defaults to False for maximum performance.
+
+        Raises:
+            ConfigurationError: If workers is negative or batch_size is <= 0.
         """
 
         if self._initialized:
@@ -79,7 +97,12 @@ class Engine:
         
         with self._lock:
             if not self._initialized:
-                self.config = {"workers": workers, "batch_size": batch_size}
+                if workers < 0:
+                    raise ConfigurationError("Number of workers cannot be negative.")
+                if batch_size <= 0:
+                    raise ConfigurationError("Batch size must be greater than 0.")
+                self._config = {"workers": workers, "batch_size": batch_size, "strict": strict}
+                self._strict = strict
                 self._initialized = True
 
     def ingest(self, source: str) -> Pipeline:
@@ -87,73 +110,106 @@ class Engine:
         Creates a new data processing pipeline for a specific source file.
 
         Args:
-            source (str): Path to the input file (CSV, JSONL, etc.).
+            source (str): Path to the input file (CSV, parquet, etc.).
 
         Returns:
             Pipeline: A new pipeline builder instance.
         """
-        return Pipeline(source, self.config, token=ACCESS_TOKEN)
+        self._ingest_counter += 1
+        base_alias = f"PIPE-{self._ingest_counter}"
+        return Pipeline(source, self._config, alias=base_alias, token=ACCESS_TOKEN)
 
     def validate(self, pipelines: Union[Pipeline, List[Pipeline]]) -> bool:
         """
-        Performs a dry-run to validate schema compatibility.
-
-        Checks if the columns referenced in the pipeline steps actually exist 
-        in the source file headers.
+        Manually triggers validation checks on pipelines without executing them.
+        
+        Useful for debugging schemas before running a heavy job.
+        Outputs validation errors to stdout.
 
         Args:
-            pipelines (Union[Pipeline, List[Pipeline]]): One or more pipelines to check.
+            pipelines: Single Pipeline or List of Pipelines.
 
         Returns:
-            bool: True if validation passes.
+            bool: True if ALL pipelines are valid, False if ANY fail.
         """
         if isinstance(pipelines, Pipeline):
             pipelines = [pipelines]
-        print("[GOOD] All pipelines look valid (Mock Schema Check Passed)")
-        return True
-    
-    def exec(self, pipelines: List[Pipeline]) -> Union[EngineResult, List[EngineResult]]:
+
+        all_passed = True
+        
+        for p in pipelines:
+            try:
+                p._validate()
+            except (SchemaError, PhaetonValueError, EngineError) as e:
+                print(e)
+                all_passed = False
+            except Exception as e:
+                print(f"[{p._alias}] Unexpected Validation Error: {e}")
+                all_passed = False
+        
+        if all_passed:
+            print("Schema Validation Passed.")
+        
+        return all_passed
+
+    def exec(self, pipelines: Union[Pipeline, List[Pipeline]]) -> Union[EngineResult, List[EngineResult]]:
         """
         Executes multiple pipelines in parallel using the Rust backend.
-
-        This is the most efficient way to run Phaeton. If multiple pipelines are provided,
-        the Engine utilizes the thread pool to process distinct files concurrently.
 
         Args:
             pipelines (List[Pipeline]): A list of configured Pipeline objects.
 
         Returns:
-            Union[EngineResult, List[EngineResult]]: A single result object or a list 
-            of result objects containing execution statistics.
+            Union[EngineResult, List[EngineResult]]: Result object(s) containing statistics.
 
         Raises:
-            ValueError: If a pipeline does not have an output or quarantine target defined.
+            EngineError: If the Rust backend fails or is missing.
+            ConfigurationError: If output targets are missing.
+            SchemaError: (If strict=True) If column validation fails.
         """
+        single_pipe = False
         if isinstance(pipelines, Pipeline):
             pipelines = [pipelines]
+            single_pipe = True
+        
+        if self._strict:
+            for p in pipelines:
+                p._validate()
 
         payloads = []
+        
         for p in pipelines:
-            if not p.output_target and not p.quarantine_path:
-                raise ValueError(f"Pipeline {p.source} has no output or quarantine target defined.")
+            if not p._output_target and not p._quarantine_path and not p._has_peeked:
+                raise ConfigurationError(
+                    f"Pipeline for '{p._source}' (Alias: {p._alias}) has no output target. "
+                    "You must call .dump(), .quarantine(), or .peek() before execution."
+                )
             
+            if not p._output_target and not p._quarantine_path and p._has_peeked:
+                continue 
+
             payloads.append({
-                "source": p.source,
-                "steps": p.steps,
-                "quarantine": p.quarantine_path,
-                "output": p.output_target,
-                "format": p.output_format
+                "source": p._source,
+                "steps": p._steps,
+                "quarantine": p._quarantine_path,
+                "output": p._output_target,
+                "format": p._output_format,
+                "config": self._config
             })
             
+        if not payloads:
+            return None if single_pipe else []
+
         try:
             from . import _phaeton
-
-            raw_results = _phaeton.execute_batch(payloads, self.config)
             
+            raw_results = _phaeton.execute_batch(payloads, self._config)
             results = [EngineResult(r) for r in raw_results]
             
-            return results if len(results) > 1 else results[0]
+            if single_pipe:
+                return results[0] if results else None
+            
+            return results
 
         except ImportError:
-            print("[FATAL] Phaeton Rust Core not found.")
-            return EngineResult({})
+            raise EngineError("Phaeton Rust Core not found. Cannot execute pipeline.")

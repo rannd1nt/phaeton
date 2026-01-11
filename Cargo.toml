@@ -1,6 +1,6 @@
 [package]
 name = "phaeton"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2021"
 authors = ["Zahraan Dzakii Tsaqiif <zahraandzakiits@gmail.com>"]
 description = "A high-performance preprocessing and ETL engine for sanitizing raw data streams, accelerated by Rust."
@@ -31,6 +31,7 @@ serde_json = "1.0"
 # Text Processing
 regex = "1.10"
 strsim = "0.11"
+heck = "0.4"
 
 # Encoding
 encoding_rs = "0.8"
@@ -41,7 +42,7 @@ chrono = "0.4"
 
 # Security
 sha2 = "0.10"
-base64 = "0.21"
+hex = "0.4"
 
 # Error Handling
 thiserror = "1.0"

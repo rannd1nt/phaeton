@@ -22,12 +22,20 @@ fn probe_file_header(path: String) -> PyResult<HashMap<String, String>> {
 
 /// Preview n rows of the pipeline
 #[pyfunction]
-fn preview_pipeline(_py: Python, source: String, steps_py: PyObject, n: usize) -> PyResult<Vec<HashMap<String, String>>> {
+fn preview_pipeline(
+    _py: Python, 
+    source: String, 
+    steps_py: PyObject, 
+    n: usize, 
+    columns: Option<Vec<String>>
+) -> PyResult<(Vec<String>, Vec<Vec<String>>)> {
+
     let steps: Vec<HashMap<String, Value>> = depythonize(steps_py.as_ref(_py))
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid steps format: {}", e)))?;
 
-    let processor = StreamProcessor::new(source, steps, n, 10000);
-    let preview = processor.peek()
+    let processor = StreamProcessor::new(source, steps, 0, 1000); 
+    
+    let preview = processor.peek(n, columns)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
     
     Ok(preview)

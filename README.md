@@ -5,8 +5,8 @@
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> ⚠️ **Project Status:** Phaeton is currently in **Experimental Beta (v0.2.3)**.
-> The core streaming engine is functional, but the library is currently under limited maintenance due to the author's personal schedule. So, some methods are still not working or are only dummy or mockup methods.
+> ⚠️ **Project Status:** Phaeton is currently in **Stable Beta (v0.3.0)**.
+> The core streaming engine is fully functional. However, please note that some auxiliary methods (marked in docs) are currently placeholders and will be implemented in future versions.
 
 
 **Phaeton** is a specialized, Rust-powered preprocessing and ETL engine designed to sanitize raw data streams before they reach your analytical environment.
@@ -25,7 +25,9 @@ This allows you to process massive datasets on standard hardware without memory 
 * **Parallel Execution:** Utilizes all CPU cores via **Rust Rayon** to handle heavy lifting (Regex, Fuzzy Matching) without blocking Python.
 * **Strict Quarantine:** Bad data isn't just dropped silently; it's quarantined into a separate file with a generated `_phaeton_reason` column for auditing.
 * **Smart Casting:** Automatically handles messy formats (e.g., `"Rp 5.250.000,00"` → `5250000` int) without complex manual parsing.
+* **Privacy & Security:** Built-in email masking and SHA-256 hashing for PII compliance.
 * **Configurable Engine:** Full control over `batch_size` and worker threads to tune performance for low-memory devices or high-end servers.
+
 
 ---
 
@@ -35,8 +37,8 @@ Phaeton is optimized for "Dirty Data" scenarios involving heavy string parsing, 
 
 
 **Test Scenario:**
-We generated a **Chaos Dataset** containing **1 Million Rows** of mixed dirty data:
-* **Operations:** Trim whitespace, Currency scrubbing (`$ 50.000,00` -> `50000`), Type casting, Fuzzy Alignment (Typo correction for City names), and Regex Filtering.
+* **Dataset:** 1 Million Rows of generated mixed dirty data.
+* **Operations:** Trim whitespace, Currency scrubbing (`$ 50.000,00` -> `50000`), Type casting, Fuzzy Alignment (Typo correction for City names), and Filtering.
 * **Hardware:** Entry-level Laptop (Intel Core i3-1220P, 16GB RAM).
 
 **Results:**
@@ -46,7 +48,13 @@ We generated a **Chaos Dataset** containing **1 Million Rows** of mixed dirty da
 | **Windows 11** | **~820,000 rows/s** | **1.21s** | **~70 MB/s** |
 | **Linux (Arch)** | ~575,000 rows/s | 1.73s | ~49 MB/s |
 
-> *Note: Phaeton maintains a low and predictable memory footprint (~10-20MB overhead) regardless of the input file size due to its streaming nature.*
+<br>
+
+> ⚠️ Note on I/O Bottleneck: The performance difference above is due to hardware configuration during testing.
+> * Windows: Ran on internal NVMe SSD (High I/O speed).
+> * Linux: Ran on External SSD via USB 3.2 enclosure (I/O Bottleneck).
+
+In an equal hardware environment, Phaeton performs identically on Linux and Windows. The engine is heavily I/O bound; faster disk = faster processing.
 
 ---
 ##  Usage Example
@@ -55,47 +63,60 @@ Based on the features available in the current version.
 ```python
 import phaeton
 
-# 1. Initialize Engine (Auto-detect cores)
-eng = phaeton.Engine(workers=0, batch_size=25_000)
+# 1. Initialize Engine
+# 'strict=True' enables schema validation before execution starts.
+eng = phaeton.Engine(workers=0, batch_size=25_000, strict=True)
 
-# 2. Define Pipeline
-
-# Base Pipeline
+# 2. Define Base Pipeline (Shared Logic)
 base = (
     eng.ingest("dirty_data.csv")
-        .prune(col="email")                         # Drop rows if email is empty
-        .prune(col="salary")                        # Drop rows if salary is empty
-        .scrub("username", "trim")                  # Clean whitespace
-        .scrub("salary", "currency")                # Parse "Rp 5.000" to number
-        .cast("salary", "int", clean=True)          # Safely cast to Integer
-        .fuzzyalign("city",
-            ref=["Jakarta", "Bandung"],
-            threshold=0.85
-        ) # Fix typos
+        # Critical Data Filter: Drop row if 'email' OR 'username' is missing
+        .prune(['email', 'username'])
+        
+        # Deduplication: Ensure email uniqueness across the dataset
+        .dedupe('email')
+        
+        # Cleaning & Normalization
+        .scrub('username', mode='trim')             # Remove whitespace
+        .scrub('salary', mode='currency')           # Normalize format ("$ 5,000" -> "5000")
+        
+        # Type Enforcement: Validate data is integer, strip noise if needed
+        .cast('salary', dtype='int', clean=True)
+        
+        # Imputation: Fill missing status with a default value
+        .fill('status', value='UNKNOWN')
+        
+        # Correction: Fix typos using Jaro-Winkler distance
+        .fuzzyalign('city',
+            ref=['Jakarta', 'Minnesota'],
+            threshold=0.85 
+        ) # e.g., "Jkarta" -> "Jakarta"
 )
 
-# 3 Pipeline branching using .fork() (Optional)
+# 3. Pipeline Branching using .fork()
 
-# Pipeline 1: Keep all rows except status 'BANNED'
+# Pipeline 1: Secure & Clean Active Users
 p1 = (
-    base.fork()
-        .discard("status", "BANNED", mode="exact")  # Filter specific values (BANNED)
-        .quarantine("quarantine_1.csv")             # Save bad data here
-        .dump("clean_data_1.csv")                   # Save good data here
+    base.fork('Active Users')
+        .keep('status', match='ACTIVE', mode='exact')
+        .hash('email', salt='s3cret')               # Anonymize PII (SHA-256)
+        .dump('clean_active.csv')
 )
 
-# Pipeline 2: Only rows with 'ACTIVE' status keeped
+# Pipeline 2: Audit Banned Users
 p2 = (
-    base.fork()
-        .keep("status", "ACTIVE", mode="exact")     # Keep specific values (ACTIVE)
-        .quarantine("quarantine_output_2.csv")      # Save bad data here
-        .dump("cleaned_output_2.csv", format="csv") # Save good data here
+    base.fork('Banned Analysis')
+        .keep('status', match='BANNED', mode='exact')
+        .quarantine('quarantine_banned.csv')        # Isolate bad rows for review
+        .dump('clean_banned.csv')
 )
 
-# 4. Execute Two Pipeline in Parallel
-stats = engine.exec([p1, p2])
-print(f"Pipeline 1 = Processed: {stats[0].processed}, Saved: {stats[0].saved}")
-print(f"Pipeline 2 = Processed: {stats[1].processed}, Saved: {stats[1].saved}")
+# 4. Execute Pipelines in Parallel
+# Returns a list of result statistics
+stats = eng.exec([p1, p2])
+
+print(f"Pipeline 1 (Active) | Processed: {stats[0].processed}, Saved: {stats[0].saved}")
+print(f"Pipeline 2 (Banned) | Processed: {stats[1].processed}, Saved: {stats[1].saved}")
 ```
 
 ---
@@ -112,82 +133,77 @@ pip install phaeton
 
 ## API Reference
 
-### Root Module <br>
-| Method | Description 
-| :---: | :---: | 
-| `phaeton.probe(path)` | Detects encoding (e.g., Windows-1252) and delimiter automatically. |
-
-### Engine Methods <br>
-
-Methods to save the final results or handle rejected data.
-
+### 1. Engine & Diagnostics <br>
 | Method | Description |
-| :--- | :--- |
-| `.ingest(source)` | Creates a new data processing pipeline for a specific source file. |
-| `.exec(pipelines)` | Executes multiple pipelines in parallel. |
-| `.validate(pipelines)` | Performs a dry-run to validate schema compatibility. | 
+| :--- | :--- | 
+| `phaeton.probe(path)` | Detects encoding and delimiter automatically. |
+| `eng.ingest(source)` | Creates a new pipeline builder. |
+| `eng.exec(pipelines)` | Executes pipelines in parallel threads. |
+| `eng.validate(pipelines)` | Runs a schema dry-run check without executing data processing. | 
 
-### Pipeline Methods <br>
-These methods are chainable.
 
-#### Transformation & Cleaning
-
-Methods focused on data sanitization and ETL logic.
+### 2. Pipeline: Cleaning & Transformation <br>
+Methods to sanitize data content.
 
 | Method | Description |
 | :--- | :--- |
 | `.decode(encoding)` | Fixes file encoding (e.g., `latin-1` or `cp1252`). **Mandatory** as the first step if encoding is broken. |
-| `.scrub(col, mode)` | Basic string cleaning. <br> **Modes:** `'trim'`, `'lower'`, `'upper'`, `'currency'`, `'html'`. |
-| `.fuzzyalign(col, ref, threshold)` | Fixes typos using *Levenshtein distance* against a reference list. |
-| `.reformat(col, to, from)` | Standardizes date formats to ISO-8601 or custom formats. |
-| `.cast(col, type, clean)` | **Smart Cast.** Converts types (`int`/`float`/`bool`). <br> Set `clean=True` to strip non-numeric chars before casting. |
+| `.scrub(col, mode)` | Basic string cleaning. <br> **Modes:** `'trim'`, `'lower'`, `'upper'`, `'currency'`, `'html'`, `numeric_only`, `email (masking)` . |
+|`.fill(col, val, method)`|**Methods:** `fixed` (constant value) or `ffill` (forward fill).|
+|`.dedupe(col)`|Removes duplicates. `col` can be `None` (full row), `str` (single col), or `list` (composite key).|
+| `.fuzzyalign(col, ref, threshold)` | Fixes typos using Jaro-Winkler distance against a reference list. |
+| `.cast(col, dtype, clean)` | **Smart Cast.** Converts types (`int`/`float`/`bool`). <br> Set `clean=True` to strip non-numeric chars before casting. |
 
-#### Structure & Security
-
-Methods for column management and data privacy.
+### 3. Pipeline: Structure & Security
+Methods to manage columns and privacy.
 
 | Method | Description |
 | :--- | :--- |
-| `.headers(style)` | Standardizes header casing. <br> **Styles:** `'snake'`, `'camel'`, `'pascal'`, `'kebab'`. |
+| `.headers(style)` | Standardizes header casing. <br> **Styles:** `'snake'`, `'camel'`, `'pascal'`, `'kebab', 'constant`. |
+| `.rename(mapping)` | Renames specific columns using a dictionary mapping `({'old': 'new'})`. |
 | `.hash(col, salt)` | Applies hashing (SHA-256) to specific columns for PII anonymization. |
-| `.rename(mapping)` | Renames specific columns using a dictionary mapping. |
+|`.map(col, mapping)`| Maps values using a dictionary lookup (VLOOKUP style).|
 
-#### Output
+
+### 4. Pipeline: Output & Flow
 
 Methods to save the final results or handle rejected data.
 
 | Method | Description |
 | :--- | :--- |
 | `.quarantine(path)` | Saves rejected rows (with reasons) to a separate CSV file. |
-| `.dump(path, format)` | Saves clean data to `.csv`, `.parquet`, or `.json` formats. |
+| `.dump(path, format)` | Saves clean data to `.csv`. |
+|`.fork(tag)`|Creates a branch of the pipeline.|
+|`.peek(n, col)`| Runs a dry-run preview. `n`: rows limit. `col`: specific column(s) to inspect (optional). |
 
-#### Utility & Workflow
-Methods to save the final results or handle rejected data.
+<br>
 
-| Method | Description |
-| :--- | :--- |
-| `.fork()` | Creates a deep copy of the current pipeline branch. Useful for splitting logic (e.g., saving to multiple formats or creating different clean levels) without rewriting steps. |
-| `.peek(n)` | Previews the first n rows. |
-
+> ⚠️ **Placeholder Methods (Coming Soon)**
+>
+> These methods are present in the API for compatibility but do not perform operations yet in v0.3.0.
+> * `reformat(col, ...)`: Date parsing/reformatting.
+> * `split(col, ...)`: Splitting columns.
+> * `combine(cols, ...)`: Merging columns.
 ---
 
 ## Roadmap
 
-Phaeton is currently in **Beta (v0.2.3)**. Here is the status of our development:
+Phaeton is currently in **Stable Beta (v0.3.0)**. Here is the status of our development:
 
 | Feature | Status | Implementation Notes |
 | :--- | :---: | :--- |
 | **Parallel Streaming Engine** | ✅ Ready | Powered by Rust Rayon (Multi-core) |
-| **Regex & Filter Logic** | ✅ Ready | `keep`, `discard`, `prune` implemented |
-| **Smart Type Casting** | ✅ Ready | Auto-clean numeric strings (`"Rp 5,000"` -> `5000`) |
+| **Filter Logic & Regex** | ✅ Ready | `keep`, `discard`, `prune` implemented |
+| **Text Scrubbing** | ✅ Ready | HTML, Currency, Email Masking, etc. |
+| **Type Enforcement** | ✅ Ready | Validates data types & scrubs noise for clean CSV output |
 | **Fuzzy Alignment** | ✅ Ready | Jaro-Winkler for typo correction |
 | **Quarantine System** | ✅ Ready | Full audit trail for rejected rows |
-| **Basic Text Scrubbing** | ✅ Ready | Trim, HTML strip, Case conversion |
+| **Deduplication** | ✅ Ready | Row-level & Column-level dedupe |
+| **Hashing & Anonymization** | ✅ Ready | SHA-256 for PII data |
+| **Header Normalization** | ✅ Ready  | `snake_case`, `camelCase` conversions |
+|**Strict Schema Validation**| ✅ Ready | `Engine(strict=True)`|
 | **Inspector Engine** | 📝 Planned | Dedicated stream for data profiling (Read-Only) |
-| **Header Normalization** | 📝 Planned  | `snake_case`, `camelCase` conversions |
 | **Date Normalization** | 📝 Planned | Auto-detect & reformat dates |
-| **Deduplication** | 📝 Planned | Row-level & Column-level dedupe |
-| **Hashing & Anonymization** | 📝 Planned | SHA-256 for PII data |
 | **Parquet/Arrow Support** | 📝 Planned | Native output integration |
 
 ---

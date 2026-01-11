@@ -1,38 +1,81 @@
 use std::borrow::Cow;
 
-/// Remove currency symbols and thousand separators
-pub fn scrub_currency(input: &str) -> Cow<'_, str> {
-    let needs_scrub = input.chars().any(|c| !c.is_ascii_digit() && c != '.' && c != ',');
-    if !needs_scrub {
+pub fn mask_email(input: &str) -> Cow<'_, str> {
+    let parts: Vec<&str> = input.split('@').collect();
+    if parts.len() != 2 {
         return Cow::Borrowed(input);
     }
 
-    let mut result = String::with_capacity(input.len());
-    let comma_pos = input.rfind(',');
-    let dot_pos = input.rfind('.');
+    let username = parts[0];
+    let domain = parts[1];
 
-    // Format Detection:
-    // ID (10.000,00) -> comma index > dot index
-    // US (10,000.00) -> dot index > comma index
-    let is_indo = match (comma_pos, dot_pos) {
-        (Some(c), Some(d)) => c > d,
-        (Some(_), None) => true,  // "10,00" -> ID
-        (None, Some(_)) => false, // "10.00" -> US
-        (None, None) => false,
-    };
-
-    for c in input.chars() {
-        if c.is_ascii_digit() {
-            result.push(c);
-        } else if c == ',' {
-            if is_indo { result.push('.'); } // ID: replace comma with dot
-        } else if c == '.' {
-            if !is_indo { result.push('.'); } // US: keep dot
-        }
-        // Another characters are ignored
+    if username.len() <= 2 {
+        return Cow::Owned(format!("{}*@{}", &username[0..1], domain));
     }
+
+    let first_char = &username[0..1];
+    let last_char = &username[username.len()-1..];
     
-    Cow::Owned(result)
+    Cow::Owned(format!("{}****{}@{}", first_char, last_char, domain))
+}
+
+pub fn scrub_currency(input: &str) -> Cow<'_, str> {
+    let skeleton: String = input.chars()
+        .filter(|c| c.is_ascii_digit() || ".,-()".contains(*c))
+        .collect();
+
+    if skeleton.is_empty() {
+        return Cow::Owned("0".to_string());
+    }
+
+    let is_negative_paren = skeleton.starts_with('(') && skeleton.ends_with(')');
+    let is_negative_sign = skeleton.starts_with('-');
+
+    let mut cleaned: String = skeleton.chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
+        .collect();
+
+    if cleaned.is_empty() {
+        return Cow::Owned("0".to_string());
+    }
+
+    let last_comma = cleaned.rfind(',');
+    let last_dot = cleaned.rfind('.');
+    let dot_count = cleaned.chars().filter(|c| *c == '.').count();
+    let comma_count = cleaned.chars().filter(|c| *c == ',').count();
+
+    if let (Some(d), Some(c)) = (last_dot, last_comma) {
+        if c > d {
+            cleaned = cleaned.replace('.', "").replace(',', ".");
+        } else {
+            cleaned = cleaned.replace(',', "");
+        }
+    } 
+
+    else if let Some(d_idx) = last_dot {
+        if dot_count > 1 {
+            cleaned = cleaned.replace('.', "");
+        } else {
+            let digits_after = cleaned.len() - 1 - d_idx;
+            if digits_after == 3 { cleaned = cleaned.replace('.', ""); }
+        }
+    }
+
+    else if let Some(c_idx) = last_comma {
+        if comma_count > 1 {
+            cleaned = cleaned.replace(',', "");
+        } else {
+             let digits_after = cleaned.len() - 1 - c_idx;
+             if digits_after == 3 { cleaned = cleaned.replace(',', ""); }
+             else { cleaned = cleaned.replace(',', "."); }
+        }
+    }
+
+    if is_negative_paren || is_negative_sign {
+        cleaned.insert(0, '-');
+    }
+
+    Cow::Owned(cleaned)
 }
 
 pub fn scrub_numeric_only(input: &str) -> Cow<'_, str> {
@@ -45,7 +88,6 @@ pub fn scrub_numeric_only(input: &str) -> Cow<'_, str> {
 }
 
 pub fn trim_whitespace(input: &str) -> Cow<'_, str> {
-    // trim() returns &str, so it's always zero-copy
     Cow::Borrowed(input.trim())
 }
 
